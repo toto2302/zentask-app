@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZenTask - Kanban Minimaliste</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Styles de base (conservés) */
+        .column-tasks::-webkit-scrollbar { width: 8px; }
+        .column-tasks::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 4px; }
+        .column-tasks::-webkit-scrollbar-track { background-color: #f1f5f9; border-radius: 4px; }
+        .dragging { opacity: 0.5; transform: rotate(2deg); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        .column-tasks { min-height: 50px; max-height: calc(100vh - 24rem); /* Ajusté pour header + team + actions */ }
+        .priority-group.drag-over-group { }
+        .column-drag-over { background-color: #dbeafe !important; border: 2px dashed #60a5fa; }
+        .task-drag-placeholder { height: 50px; background-color: rgba(191, 219, 254, 0.3); border: 2px dashed #93c5fd; border-radius: 0.375rem; margin-bottom: 0.75rem; opacity: 0; overflow: hidden; transition: opacity 0.18s cubic-bezier(0.25, 0.8, 0.25, 1), height 0.18s cubic-bezier(0.25, 0.8, 0.25, 1); }
+        .task-drag-placeholder.active { opacity: 1; }
+        .column-drag-placeholder { width: 10px; background-color: #60a5fa; border-radius: 5px; margin: 0 8px; flex-shrink: 0; align-self: stretch; opacity: 0.6; }
+        .column-title-editable { cursor: pointer; border-bottom: 2px solid transparent; }
+        .column-title-editable:hover { border-bottom: 2px dashed #a5b4fc; }
+        #task-text::-webkit-resizer, #edit-task-text::-webkit-resizer { display: none; }
+        .modal { z-index: 50; }
+        .modal-backdrop { z-index: 40; }
+
+        /* Task Styling */
+        .task { word-wrap: break-word; overflow-wrap: break-word; position: relative; cursor: pointer; display: flex; flex-direction: column; justify-content: space-between; min-height: 70px; }
+        .task-content { display: block; margin-right: 20px; flex-grow: 1; }
+
+        /* Priority Styling */
+        .priority-urgent-border { border-left: 4px solid #ef4444; }
+        .priority-important-border { border-left: 4px solid #f59e0b; }
+        .priority-normal-border { border-left: 4px solid transparent; }
+        .priority-urgent-bg { background-color: #fee2e2; }
+        .priority-important-bg { background-color: #fef3c7; }
+        .priority-normal-bg { background-color: #ffffff; }
+        .priority-icon { font-size: 0.8em; margin-right: 4px; display: inline-block; }
+        .priority-btn { padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 6px; cursor: pointer; transition: all 0.2s ease-in-out; font-size: 0.875rem; }
+        .priority-btn.selected { font-weight: 600; }
+        .priority-btn.normal:hover:not(.selected) { background-color: #f3f4f6; }
+        .priority-btn.important:hover:not(.selected) { background-color: #fef3c7; }
+        .priority-btn.urgent:hover:not(.selected) { background-color: #fee2e2; }
+        .priority-btn.normal.selected { background-color: #e5e7eb; border-color: #9ca3af; color: #374151; }
+        .priority-btn.important.selected { background-color: #fef3c7; border-color: #f59e0b; color: #b45309; }
+        .priority-btn.urgent.selected { background-color: #fee2e2; border-color: #ef4444; color: #b91c1c; }
+
+        /* Member Tags on Task & Team List */
+        .member-avatar-list { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: 4px; }
+        .member-avatar { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; font-size: 10px; font-weight: 600; border: 1px solid #93c5fd; position: relative; }
+        .member-avatar .tooltip { visibility: hidden; width: max-content; background-color: #374151; color: #fff; text-align: center; border-radius: 6px; padding: 4px 8px; position: absolute; z-index: 60; bottom: 125%; left: 50%; transform: translateX(-50%); opacity: 0; transition: opacity 0.3s; font-size: 12px; pointer-events: none; }
+        .member-avatar:hover .tooltip { visibility: visible; opacity: 1; }
+        #team-list .member-tag {
+             border-radius: 9999px; padding-top: 2px; padding-bottom: 2px; padding-left: 10px; padding-right: 20px; margin: 2px; font-size: 0.875rem; cursor: pointer; transition: transform 0.1s ease-in-out; position: relative; display: inline-block;
+             user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none;
+        }
+         #team-list .member-tag:active { transform: scale(0.95); }
+        #team-list .member-tag button { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; font-size: 10px; line-height: 1; padding: 0; }
+        #team-list .member-tag button:hover { color: #dc2626 !important; }
+
+        /* Autocomplete Styling */
+        .autocomplete-container { position: relative; }
+        .autocomplete-suggestions { position: absolute; border: 1px solid #d1d5db; border-top: none; background-color: white; width: 100%; max-height: 150px; overflow-y: auto; z-index: 60; border-radius: 0 0 0.375rem 0.375rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .autocomplete-suggestion { padding: 8px 12px; cursor: pointer; }
+        .autocomplete-suggestion:hover { background-color: #f3f4f6; }
+        .selected-member-tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 9999px; font-size: 0.875rem; margin: 2px; }
+        .selected-member-tag button { background: none; border: none; cursor: pointer; font-size: 10px; line-height: 1; padding: 0; margin-left: 4px; }
+        .selected-member-tag button:hover { color: #dc2626 !important; }
+
+        /* Input Padding */
+         textarea.p-2, input[type="text"].p-2 { padding: 0.5rem 0.75rem; }
+         #new-member-name { padding-top: 0.5rem; padding-bottom: 0.5rem; padding-left: 0.75rem; padding-right: 0.75rem; }
+         select { padding-right: 2.5rem; }
+         /* Priority group wrappers */
+         .priority-group { }
+         .priority-group:not(:empty) { margin-bottom: 0.75rem; }
+         .priority-group:empty { min-height: 10px; }
+
+         /* Team Management Positioning (Initial, before JS sticky) */
+         #team-management {
+             background-color: white; padding: 1rem; border-radius: 0.5rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 300px; margin: 1rem auto; /* Centered by default */
+         }
+         .sticky-team-management {
+             position: fixed !important; top: 1rem !important; left: 1rem !important; z-index: 30 !important; width: 300px; margin: 0; /* Override auto margin */
+         }
+         /* Main content wrapper */
+         #main-content-wrapper {
+            /* Removed height: 100vh and overflow-y: auto from here to allow body scroll until sticky logic kicks in */
+         }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-sky-50 to-indigo-100 font-sans text-gray-800">
+
+    <div id="auth-container" class="min-h-screen flex flex-col items-center justify-center p-4">
+        <div class="w-full max-w-md bg-white p-8 rounded-xl shadow-2xl">
+            <h2 id="auth-title" class="text-2xl font-bold text-center text-indigo-600 mb-6">Connexion à ZenTask</h2>
+
+            <form id="login-form" class="space-y-4">
+                <div>
+                    <label for="login-email" class="block text-sm font-medium text-gray-700">Email</label>
+                    <input type="email" id="login-email" name="login-email" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2">
+                </div>
+                <div>
+                    <label for="login-password" class="block text-sm font-medium text-gray-700">Mot de passe</label>
+                    <input type="password" id="login-password" name="login-password" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2">
+                </div>
+                <button type="submit" id="login-button" class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                    Se connecter
+                </button>
+            </form>
+
+            <form id="signup-form" class="space-y-4 hidden">
+                <div>
+                    <label for="signup-email" class="block text-sm font-medium text-gray-700">Email</label>
+                    <input type="email" id="signup-email" name="signup-email" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2">
+                </div>
+                <div>
+                    <label for="signup-password" class="block text-sm font-medium text-gray-700">Mot de passe</label>
+                    <input type="password" id="signup-password" name="signup-password" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2">
+                </div>
+                 <div>
+                    <label for="signup-confirm-password" class="block text-sm font-medium text-gray-700">Confirmer le mot de passe</label>
+                    <input type="password" id="signup-confirm-password" name="signup-confirm-password" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2">
+                </div>
+                <button type="submit" id="signup-button" class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                    S'inscrire
+                </button>
+            </form>
+
+            <div class="mt-6">
+                <div class="relative">
+                    <div class="absolute inset-0 flex items-center">
+                        <div class="w-full border-t border-gray-300"></div>
+                    </div>
+                    <div class="relative flex justify-center text-sm">
+                        <span class="px-2 bg-white text-gray-500">Ou continuer avec</span>
+                    </div>
+                </div>
+
+                <div class="mt-6 grid grid-cols-1 gap-3">
+                    <div>
+                        <button type="button" id="google-signin-button" class="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                            <span class="sr-only">Se connecter avec Google</span>
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+                                <path fill-rule="evenodd" d="M10 0C4.477 0 0 4.477 0 10s4.477 10 10 10c2.268 0 4.36-.78 6.006-2.086l-2.324-1.793A5.963 5.963 0 0010 16c-3.314 0-6-2.686-6-6s2.686-6 6-6c1.566 0 2.982.604 4.057 1.557L16.753 2.8A9.952 9.952 0 0010 0zm7.071 9.929c0-.63-.057-1.236-.162-1.818H10v3.455h3.97c-.17.984-.656 1.818-1.322 2.364v2.245h2.89c1.697-1.557 2.676-3.873 2.676-6.246z" clip-rule="evenodd" />
+                            </svg>
+                            <span class="ml-2">Google</span>
+                        </button>
+                    </div>
+                </div>
+                 <div class="mt-4 text-center">
+                    <button type="button" id="continue-as-guest-button" class="text-sm font-medium text-indigo-600 hover:text-indigo-500">
+                        Continuer en tant qu'invité
+                    </button>
+                </div>
+            </div>
+
+            <p class="mt-6 text-center text-sm text-gray-500">
+                <span id="auth-toggle-text">Pas encore de compte ?</span>
+                <button type="button" id="auth-toggle-button" class="font-medium text-indigo-600 hover:text-indigo-500">
+                    S'inscrire
+                </button>
+            </p>
+        </div>
+    </div>
+
+    <div id="app-container" class="hidden">
+        <div id="team-management">
+            <h3 class="text-lg font-semibold mb-2 text-center text-gray-700">Membres de l'équipe</h3>
+            <div class="flex space-x-2 mb-2">
+                <input type="text" id="new-member-name" placeholder="Nom du membre" class="flex-grow rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2">
+                <button id="add-member-button" class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow transition duration-150 ease-in-out text-sm flex-shrink-0">Ajouter</button>
+            </div>
+            <div id="team-list" class="text-center min-h-[24px]"></div>
+        </div>
+
+        <div id="main-content-wrapper">
+            <div id="main-content" class="max-w-full mx-auto px-2">
+                <header class="mb-8 text-center">
+                    <h1 class="text-3xl md:text-4xl font-bold text-indigo-700">ZenTask</h1>
+                    <p class="text-gray-500 mt-1">Votre tableau Kanban simple et efficace.</p>
+                </header>
+
+                <div class="mb-6 flex justify-center space-x-4">
+                     <button id="add-task-button" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-5 rounded-lg shadow transition duration-150 ease-in-out">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 inline-block mr-1 -mt-0.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" /></svg>
+                        Ajouter Tâche
+                    </button>
+                    <button id="add-column-button" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-5 rounded-lg shadow transition duration-150 ease-in-out">
+                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 inline-block mr-1 -mt-0.5" viewBox="0 0 20 20" fill="currentColor"><path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a1 1 0 011-1h14a1 1 0 110 2H3a1 1 0 01-1-1zM1 15a1 1 0 100 2h18a1 1 0 100-2H1z" /></svg>
+                        Ajouter Colonne
+                    </button>
+                     <button id="logout-button" class="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-5 rounded-lg shadow transition duration-150 ease-in-out hidden">
+                        Déconnexion
+                    </button>
+                </div>
+
+                <div id="add-task-modal" class="modal fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center hidden modal-backdrop">
+                    <div class="relative mx-auto p-6 border w-full max-w-lg shadow-lg rounded-lg bg-white">
+                        <h3 class="text-lg font-medium leading-6 text-gray-900 mb-4">Nouvelle Tâche</h3>
+                        <div>
+                            <label for="task-text" class="block text-sm font-medium text-gray-700 text-left">Description :</label>
+                            <textarea id="task-text" rows="3" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm resize-none p-2" placeholder="Que faut-il faire ?"></textarea>
+                        </div>
+                         <div class="mt-4">
+                            <label for="column-select" class="block text-sm font-medium text-gray-700 text-left">Colonne :</label>
+                            <select id="column-select" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"></select>
+                        </div>
+                         <div class="mt-4">
+                             <label class="block text-sm font-medium text-gray-700 text-left mb-1">Priorité :</label>
+                             <div id="add-priority-buttons" class="flex space-x-2">
+                                 <button data-priority="normal" class="priority-btn normal selected">Normal</button>
+                                 <button data-priority="important" class="priority-btn important">Important</button>
+                                 <button data-priority="urgent" class="priority-btn urgent">Urgent</button>
+                             </div>
+                         </div>
+                         <div class="mt-4">
+                             <label for="assign-member-input" class="block text-sm font-medium text-gray-700 text-left">Assigner à :</label>
+                             <div class="autocomplete-container mt-1">
+                                 <input type="text" id="assign-member-input" placeholder="Chercher un membre..." class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2">
+                                 <div id="member-suggestions" class="autocomplete-suggestions hidden"></div>
+                             </div>
+                             <div id="selected-members-tags" class="mt-2 min-h-[24px]"></div>
+                         </div>
+                         <div class="mt-6 flex justify-end space-x-3">
+                            <button id="cancel-task-button" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-lg transition duration-150 ease-in-out">Annuler</button>
+                            <button id="confirm-add-task-button" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg shadow transition duration-150 ease-in-out">Ajouter</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="edit-task-modal" class="modal fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center hidden modal-backdrop">
+                    <div class="relative mx-auto p-6 border w-full max-w-lg shadow-lg rounded-lg bg-white">
+                        <h3 class="text-lg font-medium leading-6 text-gray-900 mb-4">Modifier Tâche</h3>
+                        <input type="hidden" id="edit-task-id">
+                        <div>
+                            <label for="edit-task-text" class="block text-sm font-medium text-gray-700 text-left">Description :</label>
+                            <textarea id="edit-task-text" rows="3" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm resize-none p-2"></textarea>
+                        </div>
+                         <div class="mt-4">
+                             <label class="block text-sm font-medium text-gray-700 text-left mb-1">Priorité :</label>
+                             <div id="edit-priority-buttons" class="flex space-x-2">
+                                 <button data-priority="normal" class="priority-btn normal">Normal</button>
+                                 <button data-priority="important" class="priority-btn important">Important</button>
+                                 <button data-priority="urgent" class="priority-btn urgent">Urgent</button>
+                             </div>
+                         </div>
+                         <div class="mt-4">
+                             <label for="edit-assign-member-input" class="block text-sm font-medium text-gray-700 text-left">Assigner à :</label>
+                             <div class="autocomplete-container mt-1">
+                                 <input type="text" id="edit-assign-member-input" placeholder="Chercher un membre..." class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2">
+                                 <div id="edit-member-suggestions" class="autocomplete-suggestions hidden"></div>
+                             </div>
+                             <div id="edit-selected-members-tags" class="mt-2 min-h-[24px]"></div>
+                         </div>
+                         <div class="mt-6 flex justify-end space-x-3">
+                            <button id="edit-cancel-task-button" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-lg transition duration-150 ease-in-out">Annuler</button>
+                            <button id="edit-confirm-task-button" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg shadow transition duration-150 ease-in-out">Enregistrer</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="kanban-board" class="flex items-start space-x-4 md:space-x-6 pb-4 overflow-x-auto min-w-full"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM Elements ---
+        const authContainer = document.getElementById('auth-container');
+        const appContainer = document.getElementById('app-container');
+        const loginForm = document.getElementById('login-form');
+        const signupForm = document.getElementById('signup-form');
+        const authToggleButton = document.getElementById('auth-toggle-button');
+        const authToggleText = document.getElementById('auth-toggle-text');
+        const authTitle = document.getElementById('auth-title');
+        const googleSigninButton = document.getElementById('google-signin-button');
+        const continueAsGuestButton = document.getElementById('continue-as-guest-button');
+        const logoutButton = document.getElementById('logout-button');
+
+        const kanbanBoard = document.getElementById('kanban-board');
+        const addTaskButton = document.getElementById('add-task-button');
+        const addColumnButton = document.getElementById('add-column-button');
+        // Add Task Modal
+        const addTaskModal = document.getElementById('add-task-modal');
+        const cancelTaskButton = document.getElementById('cancel-task-button');
+        const confirmAddTaskButton = document.getElementById('confirm-add-task-button');
+        const taskTextInput = document.getElementById('task-text');
+        const columnSelect = document.getElementById('column-select');
+        const addPriorityButtonsContainer = document.getElementById('add-priority-buttons');
+        const addAssignMemberInput = document.getElementById('assign-member-input');
+        const addMemberSuggestionsContainer = document.getElementById('member-suggestions');
+        const addSelectedMembersTagsContainer = document.getElementById('selected-members-tags');
+        // Edit Task Modal
+        const editTaskModal = document.getElementById('edit-task-modal');
+        const editTaskIdInput = document.getElementById('edit-task-id');
+        const editTaskTextInput = document.getElementById('edit-task-text');
+        const editPriorityButtonsContainer = document.getElementById('edit-priority-buttons');
+        const editAssignMemberInput = document.getElementById('edit-assign-member-input');
+        const editMemberSuggestionsContainer = document.getElementById('edit-member-suggestions');
+        const editSelectedMembersTagsContainer = document.getElementById('edit-selected-members-tags');
+        const editCancelTaskButton = document.getElementById('edit-cancel-task-button');
+        const editConfirmTaskButton = document.getElementById('edit-confirm-task-button');
+        // Team Management
+        const teamManagementDiv = document.getElementById('team-management');
+        const newMemberNameInput = document.getElementById('new-member-name');
+        const addMemberButton = document.getElementById('add-member-button');
+        const teamListDiv = document.getElementById('team-list');
+        // Main Content
+        const mainContentWrapper = document.getElementById('main-content-wrapper');
+        const mainContentDiv = document.getElementById('main-content');
+
+        // --- State Management ---
+        let boardState = {
+            columns: [],
+            teamMembers: []
+        };
+        let addSelectedMemberIds = new Set();
+        let editSelectedMemberIds = new Set();
+        let initialTeamManagementOffsetTop = 0;
+        let teamManagementHeight = 0;
+        let isUserLoggedIn = false; // Simulation state
+
+        // --- Constants ---
+        const PRIORITY_LEVELS = { urgent: 3, important: 2, normal: 1 };
+        const MEMBER_COLORS = [
+            { bg: 'bg-blue-100', text: 'text-blue-800', btn: 'text-blue-600' },
+            { bg: 'bg-green-100', text: 'text-green-800', btn: 'text-green-600' },
+            { bg: 'bg-purple-100', text: 'text-purple-800', btn: 'text-purple-600' },
+            { bg: 'bg-pink-100', text: 'text-pink-800', btn: 'text-pink-600' },
+            { bg: 'bg-indigo-100', text: 'text-indigo-800', btn: 'text-indigo-600' },
+            { bg: 'bg-yellow-100', text: 'text-yellow-800', btn: 'text-yellow-600' },
+            { bg: 'bg-teal-100', text: 'text-teal-800', btn: 'text-teal-600' },
+        ];
+
+        // --- Functions ---
+
+        function generateId(prefix = 'item') { return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`; }
+        function saveState() { try { localStorage.setItem('zenTaskBoardState_v4', JSON.stringify(boardState)); console.log("State saved (v4)."); } catch (e) { console.error("Error saving state:", e); } }
+        function loadState() {
+             console.log("Loading state (v4)...");
+            const savedState = localStorage.getItem('zenTaskBoardState_v4');
+            const defaultState = { columns: [ { id: generateId('col'), title: 'À Faire', tasks: [] }, { id: generateId('col'), title: 'En Cours', tasks: [] }, { id: generateId('col'), title: 'Terminé', tasks: [] } ], teamMembers: [] };
+            if (savedState) {
+                try {
+                    boardState = JSON.parse(savedState);
+                    if (!Array.isArray(boardState.columns)) { console.warn("Invalid columns. Resetting."); boardState.columns = defaultState.columns; }
+                    if (!Array.isArray(boardState.teamMembers)) { console.warn("Invalid team. Initializing."); boardState.teamMembers = defaultState.teamMembers; }
+                    boardState.columns.forEach(col => {
+                         if (!col.id) col.id = generateId('col'); if (!Array.isArray(col.tasks)) col.tasks = [];
+                         col.tasks.forEach(task => {
+                             if (!task.id) task.id = generateId('task'); if (!task.priority) task.priority = 'normal'; if (!Array.isArray(task.assignedMemberIds)) task.assignedMemberIds = [];
+                         });
+                     });
+                     boardState.teamMembers.forEach((member, index) => {
+                         if (!member.id) member.id = generateId('member');
+                         if (typeof member.name !== 'string') member.name = 'Inconnu';
+                         if (!member.color) { member.color = MEMBER_COLORS[index % MEMBER_COLORS.length]; }
+                     });
+                    console.log("State loaded (v4):", boardState);
+                } catch (e) { console.error("Failed parse state (v4), using default.", e); boardState = defaultState; saveState(); }
+            } else { console.log("No saved state (v4), using default."); boardState = defaultState; saveState(); }
+            if (!boardState.columns || boardState.columns.length === 0) { console.log("State has no columns, resetting."); boardState.columns = defaultState.columns; saveState(); }
+        }
+
+        function getScrollPositions() { const positions = {}; document.querySelectorAll('.column[data-column-id]').forEach(c => { const tasks = c.querySelector('.column-tasks'); if (tasks) positions[c.dataset.columnId] = tasks.scrollTop; }); return positions; }
+        function restoreScrollPositions(positions) { requestAnimationFrame(() => { for (const columnId in positions) { const tasks = kanbanBoard.querySelector(`.column[data-column-id="${columnId}"] .column-tasks`); if (tasks) tasks.scrollTop = positions[columnId]; } }); }
+
+        /** Renders the entire Kanban board */
+        function renderBoard() {
+            console.log("Rendering board...");
+            const scrollPositions = getScrollPositions();
+            kanbanBoard.innerHTML = '';
+            if (!boardState || !Array.isArray(boardState.columns)) { console.error("Cannot render: invalid state.", boardState); return; }
+
+            boardState.columns.forEach((column) => {
+                if (!column || !column.id) { console.warn("Skipping invalid column:", column); return; }
+                const columnEl = document.createElement('div');
+                columnEl.className = 'column bg-gray-100 rounded-lg shadow p-4 flex flex-col flex-shrink-0 w-72 md:w-80';
+                columnEl.dataset.columnId = column.id;
+                columnEl.addEventListener('dragover', handleDragOver);
+                columnEl.addEventListener('dragleave', handleDragLeave);
+                columnEl.addEventListener('drop', handleDrop);
+
+                const headerEl = document.createElement('div'); headerEl.className = 'flex justify-between items-center mb-4 pb-2 border-b flex-shrink-0';
+                const titleEl = document.createElement('h2');
+                titleEl.draggable = true;
+                titleEl.className = 'text-lg font-semibold text-gray-700 column-title-editable flex-grow mr-2 cursor-grab active:cursor-grabbing';
+                titleEl.textContent = column.title || 'Sans titre'; titleEl.title = "Cliquez pour renommer / Glissez pour déplacer";
+                titleEl.addEventListener('click', () => makeColumnTitleEditable(titleEl, column.id));
+                titleEl.addEventListener('dragstart', handleDragStart);
+                titleEl.addEventListener('dragend', handleDragEnd);
+                headerEl.appendChild(titleEl);
+
+                const deleteColBtn = document.createElement('button'); deleteColBtn.className = 'text-gray-400 hover:text-red-500 transition-colors flex-shrink-0'; deleteColBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>`; deleteColBtn.title = "Supprimer la colonne"; deleteColBtn.addEventListener('click', (e) => { console.log("Col delete req:", column.id); e.stopPropagation(); deleteColumn(column.id); }); headerEl.appendChild(deleteColBtn); columnEl.appendChild(headerEl);
+
+                const tasksContainerEl = document.createElement('div');
+                tasksContainerEl.className = 'column-tasks overflow-y-auto overflow-x-hidden'; // max-height set by JS
+                columnEl.appendChild(tasksContainerEl);
+                setDynamicColumnTasksHeight(); // Call after appending to DOM
+
+                const urgentGroupEl = document.createElement('div'); urgentGroupEl.className = 'priority-group urgent-group'; urgentGroupEl.dataset.priorityGroup = 'urgent'; tasksContainerEl.appendChild(urgentGroupEl);
+                const importantGroupEl = document.createElement('div'); importantGroupEl.className = 'priority-group important-group'; importantGroupEl.dataset.priorityGroup = 'important'; tasksContainerEl.appendChild(importantGroupEl);
+                const normalGroupEl = document.createElement('div'); normalGroupEl.className = 'priority-group normal-group'; normalGroupEl.dataset.priorityGroup = 'normal'; tasksContainerEl.appendChild(normalGroupEl);
+
+                if (Array.isArray(column.tasks)) {
+                    column.tasks.forEach(task => {
+                        if (!task || !task.id) { console.warn("Skipping invalid task:", task); return; }
+                        const taskEl = createTaskElement(task);
+                        const priority = task.priority || 'normal';
+                        if (priority === 'urgent') urgentGroupEl.appendChild(taskEl);
+                        else if (priority === 'important') importantGroupEl.appendChild(taskEl);
+                        else normalGroupEl.appendChild(taskEl);
+                         taskEl.style.marginBottom = '0.75rem';
+                    });
+                } else { console.warn("Invalid tasks array:", column.id); }
+
+                kanbanBoard.appendChild(columnEl);
+            });
+
+            restoreScrollPositions(scrollPositions);
+            console.log("Board rendering complete.");
+        }
+
+        function populateColumnSelect() {
+            console.log("Populating column select..."); columnSelect.innerHTML = '';
+            if (!boardState || !Array.isArray(boardState.columns) || boardState.columns.length === 0) { const o = document.createElement('option'); o.value = ''; o.textContent = 'Aucune colonne'; o.disabled = true; columnSelect.appendChild(o); }
+            else { boardState.columns.forEach(c => { const o = document.createElement('option'); o.value = c.id; o.textContent = c.title || 'Sans titre'; columnSelect.appendChild(o); }); }
+             console.log("Column select populated.");
+        }
+
+        function makeColumnTitleEditable(titleElement, columnId) {
+            console.log("Making col title editable:", columnId); if (titleElement.isContentEditable) return;
+            titleElement.contentEditable = true; titleElement.focus(); titleElement.classList.add('bg-white', 'ring-2', 'ring-indigo-400', 'px-1', 'rounded-sm');
+            const originalText = titleElement.textContent;
+            const saveChanges = () => { titleElement.contentEditable = false; titleElement.classList.remove('bg-white', 'ring-2', 'ring-indigo-400', 'px-1', 'rounded-sm'); const newTitle = titleElement.textContent.trim(); if (newTitle && newTitle !== originalText) { const idx = boardState.columns.findIndex(c => c.id === columnId); if (idx !== -1) { boardState.columns[idx].title = newTitle; saveState(); populateColumnSelect(); console.log(`Col ${columnId} renamed.`); } } else { titleElement.textContent = originalText; } titleElement.removeEventListener('blur', saveChanges); titleElement.removeEventListener('keydown', handleKeyDown); };
+            const handleKeyDown = (e) => { if (e.key === 'Enter') { e.preventDefault(); saveChanges(); } else if (e.key === 'Escape') { titleElement.textContent = originalText; saveChanges(); } };
+            titleElement.addEventListener('blur', saveChanges); titleElement.addEventListener('keydown', handleKeyDown);
+            requestAnimationFrame(() => { try { const r = document.createRange(); r.selectNodeContents(titleElement); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); } catch(e) { console.error("Error selecting text:", e); } });
+        }
+
+        /** Creates a DOM element for a single task */
+        function createTaskElement(task) {
+            // console.log('Rendering task:', task.id, 'Assigned:', task.assignedMemberIds);
+
+            const taskEl = document.createElement('div');
+            const priority = task.priority || 'normal';
+            const priorityBorderClass = `priority-${priority}-border`;
+            const priorityBgClass = `priority-${priority}-bg`;
+
+            taskEl.className = `task p-3 rounded-md shadow border border-gray-200 cursor-pointer active:cursor-grabbing ${priorityBorderClass} ${priorityBgClass}`;
+            taskEl.draggable = true;
+            taskEl.dataset.taskId = task.id;
+            taskEl.dataset.taskPriority = priority;
+
+             taskEl.addEventListener('click', (e) => {
+                 if (e.target.closest('button.task-delete-btn')) return;
+                 console.log("Task clicked for edit:", task.id);
+                 showEditTaskModal(task.id);
+             });
+
+            const contentWrapper = document.createElement('div');
+            contentWrapper.className = 'task-content';
+
+            let icon = '';
+            if (priority === 'urgent') icon = '🔥';
+            else if (priority === 'important') icon = '⭐';
+            if (icon) {
+                const iconSpan = document.createElement('span');
+                iconSpan.className = 'priority-icon';
+                iconSpan.textContent = icon;
+                contentWrapper.appendChild(iconSpan);
+            }
+
+            const textNode = document.createTextNode(task.text || 'Tâche sans texte');
+            contentWrapper.appendChild(textNode);
+            taskEl.appendChild(contentWrapper);
+
+            // --- Member Tag Display (Using Initials in Circles) ---
+            if (Array.isArray(task.assignedMemberIds) && task.assignedMemberIds.length > 0) {
+                const avatarListEl = document.createElement('div');
+                avatarListEl.className = 'member-avatar-list';
+                task.assignedMemberIds.forEach(memberId => {
+                    const member = boardState.teamMembers.find(m => m.id === memberId);
+                    if (member) {
+                        const avatarEl = document.createElement('span');
+                        const colorClasses = member.color || MEMBER_COLORS[0];
+                        avatarEl.className = `member-avatar ${colorClasses.bg} ${colorClasses.text}`;
+                        const initials = member.name.substring(0, 2).toUpperCase();
+                        avatarEl.textContent = initials;
+
+                        const tooltipSpan = document.createElement('span');
+                        tooltipSpan.className = 'tooltip';
+                        tooltipSpan.textContent = member.name;
+                        avatarEl.appendChild(tooltipSpan);
+
+                        avatarListEl.appendChild(avatarEl);
+                    }
+                });
+                 taskEl.appendChild(avatarListEl);
+            }
+            // --- End Member Tag Display ---
+
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'task-delete-btn absolute top-1 right-1 inline-block align-middle text-gray-300 hover:text-red-500 text-xs';
+            deleteBtn.innerHTML = '✕'; deleteBtn.title = 'Supprimer la tâche';
+            deleteBtn.addEventListener('click', (e) => {
+                console.log("Task delete req (no confirm):", task.id);
+                e.stopPropagation();
+                deleteTask(task.id);
+            });
+            taskEl.appendChild(deleteBtn);
+
+            taskEl.addEventListener('dragstart', handleDragStart);
+            taskEl.addEventListener('dragend', handleDragEnd);
+            return taskEl;
+        }
+
+
+        function addTask(text, targetColumnId, priority, assignedMemberIds) {
+            // console.log(`Adding task: text=${text}, col=${targetColumnId}, prio=${priority}, members=`, assignedMemberIds);
+            if (!text.trim() || !targetColumnId) { console.warn("Add task invalid."); return; }
+            const newTask = { id: generateId('task'), text: text.trim(), priority: priority || 'normal', assignedMemberIds: assignedMemberIds || [] };
+            // console.log("New task object:", newTask);
+            const targetColumn = boardState.columns.find(col => col.id === targetColumnId);
+            if (targetColumn) { if (!Array.isArray(targetColumn.tasks)) { targetColumn.tasks = []; } targetColumn.tasks.push(newTask); saveState(); renderBoard(); console.log("Task added."); }
+            else { console.error("Target column not found:", targetColumnId); }
+        }
+
+        function updateTask(taskId, updatedData) {
+            // console.log("Updating task:", taskId, "with data:", updatedData);
+            let found = false;
+            boardState.columns.forEach(column => {
+                if (column && Array.isArray(column.tasks)) {
+                    const taskIndex = column.tasks.findIndex(task => task && task.id === taskId);
+                    if (taskIndex !== -1) {
+                        const updatedTask = {
+                            ...column.tasks[taskIndex],
+                            text: updatedData.text ?? column.tasks[taskIndex].text,
+                            priority: updatedData.priority ?? column.tasks[taskIndex].priority,
+                            assignedMemberIds: updatedData.assignedMemberIds ?? column.tasks[taskIndex].assignedMemberIds
+                        };
+                        // console.log("Updated task object:", updatedTask);
+                        column.tasks[taskIndex] = updatedTask;
+                        found = true;
+                    }
+                }
+            });
+            if (found) { saveState(); renderBoard(); console.log("Task updated."); }
+            else { console.error("Task not found for update:", taskId); }
+        }
+
+
+        function deleteTask(taskId) { console.log("Executing deleteTask for:", taskId); if (!taskId) { console.error("Delete task failed: Invalid ID."); return; } let found = false; boardState.columns = boardState.columns.map(c => { if (c && Array.isArray(c.tasks)) { const len = c.tasks.length; c.tasks = c.tasks.filter(t => t && t.id !== taskId); if (c.tasks.length < len) found = true; } return c; }); if (found) { saveState(); renderBoard(); console.log(`Task ${taskId} deleted.`); } else { console.error(`Task ${taskId} not found.`); } }
+
+        function addColumn() { console.log("Add column (no prompt)."); const title = "Nouvelle Colonne"; const newCol = { id: generateId('col'), title: title, tasks: [] }; if (!Array.isArray(boardState.columns)) boardState.columns = []; boardState.columns.push(newCol); saveState(); renderBoard(); populateColumnSelect(); console.log("Column added:", newCol); try { const el = kanbanBoard.querySelector(`[data-column-id="${newCol.id}"]`); if(el) el.scrollIntoView({ behavior: 'smooth', inline: 'end' }); } catch (e) { console.error("Scroll error:", e); } }
+
+        function deleteColumn(columnId) { console.log("Executing deleteColumn:", columnId); if (!columnId) { console.error("Delete column failed: Invalid ID."); return; } boardState.columns = boardState.columns.filter(c => c && c.id !== columnId); saveState(); renderBoard(); populateColumnSelect(); console.log(`Column ${columnId} deleted.`); }
+
+        /** Adds a team member with an assigned color */
+        function addTeamMember() {
+            const name = newMemberNameInput.value.trim();
+            if (!name) { console.warn("Empty member name."); return; }
+            const colorIndex = boardState.teamMembers.length % MEMBER_COLORS.length;
+            const memberColor = MEMBER_COLORS[colorIndex];
+
+            const newMember = { id: generateId('member'), name: name, color: memberColor };
+
+            if (!Array.isArray(boardState.teamMembers)) boardState.teamMembers = [];
+            if (!boardState.teamMembers.some(m => m.name.toLowerCase() === name.toLowerCase())) {
+                boardState.teamMembers.push(newMember);
+                saveState();
+                renderTeamList();
+                newMemberNameInput.value = '';
+                console.log("Member added:", newMember);
+            } else { console.warn("Member exists."); alert("Ce membre existe déjà."); }
+        }
+        function deleteTeamMember(memberId) { console.log("Deleting member:", memberId); boardState.teamMembers = boardState.teamMembers.filter(m => m.id !== memberId); boardState.columns.forEach(col => { col.tasks.forEach(task => { task.assignedMemberIds = task.assignedMemberIds.filter(id => id !== memberId); }); }); saveState(); renderTeamList(); renderBoard(); console.log("Member deleted."); }
+
+        /** Renders team list with member colors */
+        function renderTeamList() {
+            console.log("Rendering team list...");
+            teamListDiv.innerHTML = '';
+            if (!boardState.teamMembers || boardState.teamMembers.length === 0) {
+                teamListDiv.innerHTML = '<p class="text-xs text-gray-500">Aucun membre ajouté.</p>';
+                return;
+            }
+            boardState.teamMembers.forEach(member => {
+                const colorClasses = member.color || MEMBER_COLORS[0];
+                const span = document.createElement('span');
+                // Apply color classes and styles from v25
+                span.className = `member-tag ${colorClasses.bg} ${colorClasses.text}`;
+                 span.style.borderRadius = '9999px'; span.style.paddingRight = '20px'; span.style.margin = '2px'; span.style.fontSize = '0.875rem'; span.style.position = 'relative'; span.style.display = 'inline-block';
+                 span.style.cursor = 'pointer'; // Make it clickable
+                 span.style.userSelect = 'none'; // Prevent text selection
+                 span.dataset.memberId = member.id; // Store ID for click handler
+
+                span.textContent = member.name;
+                const btn = document.createElement('button'); btn.innerHTML = '✕'; btn.title = 'Supprimer membre'; btn.style.color = colorClasses.btn || '#4f46e5';
+                btn.onclick = (e) => { e.stopPropagation(); deleteTeamMember(member.id); }; span.appendChild(btn);
+
+                // Add click listener for color change
+                span.addEventListener('click', handleChangeMemberColor);
+
+                teamListDiv.appendChild(span);
+            });
+            console.log("Team list rendered.");
+        }
+
+        /** Handles click on member tag in team list to change color */
+        function handleChangeMemberColor(event) {
+            // Prevent triggering if delete button was clicked
+            if (event.target.tagName === 'BUTTON') return;
+
+            const memberId = event.currentTarget.dataset.memberId;
+            const memberIndex = boardState.teamMembers.findIndex(m => m.id === memberId);
+            if (memberIndex === -1) return;
+
+            const currentMember = boardState.teamMembers[memberIndex];
+            const currentColorIndex = MEMBER_COLORS.findIndex(c => c.bg === currentMember.color?.bg);
+            const nextColorIndex = (currentColorIndex + 1) % MEMBER_COLORS.length;
+
+            boardState.teamMembers[memberIndex].color = MEMBER_COLORS[nextColorIndex];
+            console.log(`Changed color for member ${memberId} to index ${nextColorIndex}`);
+
+            saveState();
+            renderTeamList();
+            renderBoard();
+        }
+
+
+        // --- Autocomplete Functions ---
+        let autocompleteListeners = {};
+
+        function setupAutocomplete(inputId, suggestionsContainerId, selectedTagsContainerId, targetSet) {
+            const input = document.getElementById(inputId);
+            const suggestionsContainer = document.getElementById(suggestionsContainerId);
+            const selectedTagsContainer = document.getElementById(selectedTagsContainerId);
+
+            if (!input || !suggestionsContainer || !selectedTagsContainer) { console.error("Autocomplete setup failed: Missing elements for", inputId); return; }
+
+            if (autocompleteListeners[inputId]) {
+                autocompleteListeners[inputId].input(); autocompleteListeners[inputId].blur(); autocompleteListeners[inputId].suggestionMousedown();
+                // console.log("Removed old listeners for", inputId);
+            }
+             suggestionsContainer.innerHTML = '';
+
+
+            const handleInput = () => {
+                const query = input.value.toLowerCase(); suggestionsContainer.innerHTML = '';
+                if (query.length > 0) {
+                    const filteredMembers = boardState.teamMembers.filter(member => member.name.toLowerCase().includes(query) && !targetSet.has(member.id));
+                    if (filteredMembers.length > 0) {
+                        filteredMembers.forEach(member => {
+                            const div = document.createElement('div'); div.textContent = member.name; div.className = 'autocomplete-suggestion';
+                            div.addEventListener('click', () => { addSelectedMemberTag(member, selectedTagsContainer, targetSet); input.value = ''; suggestionsContainer.innerHTML = ''; suggestionsContainer.classList.add('hidden'); });
+                            suggestionsContainer.appendChild(div);
+                        }); suggestionsContainer.classList.remove('hidden');
+                    } else { suggestionsContainer.classList.add('hidden'); }
+                } else { suggestionsContainer.classList.add('hidden'); }
+            };
+
+            let suggestionClicked = false;
+            const handleSuggestionMousedown = () => { suggestionClicked = true; };
+            const handleBlur = () => { setTimeout(() => { if (!suggestionClicked) { suggestionsContainer.classList.add('hidden'); } suggestionClicked = false; }, 150); };
+
+            input.addEventListener('input', handleInput);
+            suggestionsContainer.addEventListener('mousedown', handleSuggestionMousedown);
+            input.addEventListener('blur', handleBlur);
+            // console.log("Added new listeners for", inputId);
+
+            autocompleteListeners[inputId] = { input: () => input.removeEventListener('input', handleInput), blur: () => input.removeEventListener('blur', handleBlur), suggestionMousedown: () => suggestionsContainer.removeEventListener('mousedown', handleSuggestionMousedown) };
+
+            renderSelectedMemberTags(selectedTagsContainer, targetSet);
+        }
+
+
+        function addSelectedMemberTag(member, container, targetSet) {
+            if (!targetSet || typeof targetSet.has !== 'function' || typeof targetSet.add !== 'function') { console.error("Invalid targetSet passed to addSelectedMemberTag", targetSet); return; }
+            if (targetSet.has(member.id)) return;
+            // console.log(`addSelectedMemberTag called for container: ${container?.id}. Adding: ${member.id}. Set BEFORE add:`, Array.from(targetSet));
+            targetSet.add(member.id);
+            console.log(`Member added to Set (${container?.id.includes('edit') ? 'Edit' : 'Add'}):`, member.id, 'Current Set AFTER add:', Array.from(targetSet));
+            renderSelectedMemberTags(container, targetSet);
+        }
+
+        function removeSelectedMemberTag(memberId, container, targetSet) {
+             if (!targetSet || typeof targetSet.delete !== 'function') { console.error("Invalid targetSet passed to removeSelectedMemberTag", targetSet); return; }
+            // console.log(`removeSelectedMemberTag called for container: ${container?.id}. Removing: ${memberId}. Set BEFORE remove:`, Array.from(targetSet));
+            targetSet.delete(memberId);
+            console.log(`Member removed from Set (${container?.id.includes('edit') ? 'Edit' : 'Add'}):`, memberId, 'Current Set AFTER remove:', Array.from(targetSet));
+            renderSelectedMemberTags(container, targetSet);
+        }
+
+        // Render tags in modal (using v25 style - colored background/text)
+        function renderSelectedMemberTags(container, targetSet) {
+            if (!container || !targetSet || typeof targetSet.forEach !== 'function') { console.error("Invalid arguments for renderSelectedMemberTags", container, targetSet); return; }
+            container.innerHTML = '';
+            targetSet.forEach(memberId => {
+                const member = boardState.teamMembers.find(m => m.id === memberId);
+                if (member) {
+                    const tag = document.createElement('span');
+                    const colorClasses = member.color || MEMBER_COLORS[0];
+                    tag.className = `selected-member-tag ${colorClasses.bg} ${colorClasses.text}`; // Apply color
+                    tag.textContent = member.name;
+                    const removeBtn = document.createElement('button');
+                    removeBtn.innerHTML = '✕'; removeBtn.title = 'Retirer'; removeBtn.className = colorClasses.btn || 'text-indigo-600'; // Apply button color
+                    removeBtn.addEventListener('click', () => { removeSelectedMemberTag(member.id, container, targetSet); });
+                    tag.appendChild(removeBtn); container.appendChild(tag);
+                }
+            });
+        }
+
+
+        function setupPriorityButtons(containerId) { const container = document.getElementById(containerId); container.addEventListener('click', (e) => { if (e.target.tagName === 'BUTTON' && e.target.dataset.priority) { container.querySelectorAll('.priority-btn').forEach(btn => btn.classList.remove('selected')); e.target.classList.add('selected'); console.log(`Priority selected in ${containerId}: ${e.target.dataset.priority}`); } }); }
+        function getSelectedPriority(containerId) { const btn = document.getElementById(containerId)?.querySelector('.priority-btn.selected'); return btn ? btn.dataset.priority : 'normal'; }
+        function setSelectedPriority(containerId, priority) { const container = document.getElementById(containerId); if (!container) return; container.querySelectorAll('.priority-btn').forEach(btn => { btn.classList.remove('selected'); if (btn.dataset.priority === priority) { btn.classList.add('selected'); } }); if (!container.querySelector('.priority-btn.selected')) { container.querySelector('.priority-btn[data-priority="normal"]')?.classList.add('selected'); } }
+
+        // --- Drag and Drop Handlers (Combined Task & Column) ---
+        let draggedItemId = null; // Can be task or column ID
+        let draggedItemType = null; // 'task' or 'column'
+        let sourceColumnId = null; // Only relevant for tasks
+        let placeholder = null; // Can be task or column placeholder
+        let draggedTaskPriority = null; // Only relevant for tasks
+
+        // Placeholder Elements
+        function getTaskPlaceholder() { if (!placeholder || placeholder.className !== 'task-drag-placeholder') { placeholder = document.createElement('div'); placeholder.className = 'task-drag-placeholder'; } return placeholder; }
+        function getColumnPlaceholder() { if (!placeholder || placeholder.className !== 'column-drag-placeholder') { placeholder = document.createElement('div'); placeholder.className = 'column-drag-placeholder'; } return placeholder; }
+
+        function handleDragStart(event) {
+            const taskEl = event.target.closest('.task');
+            const titleEl = event.target.closest('.column-title-editable');
+
+            if (taskEl) { // Dragging a task
+                 if (event.target.closest('button.task-delete-btn')) { event.preventDefault(); return; }
+                draggedItemId = taskEl.dataset.taskId;
+                draggedItemType = 'task';
+                sourceColumnId = taskEl.closest('.column').dataset.columnId;
+                draggedTaskPriority = taskEl.dataset.taskPriority || 'normal';
+                setTimeout(() => { taskEl.classList.add('dragging'); }, 0);
+                event.dataTransfer.effectAllowed = 'move';
+                event.dataTransfer.setData('text/plain', `task-${draggedItemId}`);
+                console.log(`Drag Start Task: ${draggedItemId} (Prio: ${draggedTaskPriority}) from Col: ${sourceColumnId}`);
+
+            } else if (titleEl) { // Dragging a column title
+                const columnEl = titleEl.closest('.column');
+                draggedItemId = columnEl.dataset.columnId;
+                draggedItemType = 'column';
+                sourceColumnId = null;
+                draggedTaskPriority = null;
+                setTimeout(() => { columnEl.classList.add('dragging-column'); }, 0);
+                event.dataTransfer.effectAllowed = 'move';
+                event.dataTransfer.setData('text/plain', `col-${draggedItemId}`);
+                console.log(`Drag Start Column: ${draggedItemId}`);
+            } else {
+                 event.preventDefault();
+            }
+             if (draggedItemType) {
+                 document.body.style.overflow = 'hidden';
+             }
+        }
+
+        function handleDragEnd(event) { requestAnimationFrame(() => { document.querySelectorAll('.task.dragging').forEach(el => el.classList.remove('dragging')); document.querySelectorAll('.column.dragging-column').forEach(el => el.classList.remove('dragging-column')); if (placeholder && placeholder.parentNode) placeholder.parentNode.removeChild(placeholder); placeholder = null; document.querySelectorAll('.priority-group.drag-over-group').forEach(el => el.classList.remove('drag-over-group')); document.querySelectorAll('.column-drag-over').forEach(el => el.classList.remove('column-drag-over')); draggedItemId = null; draggedItemType = null; sourceColumnId = null; draggedTaskPriority = null; document.body.style.overflow = ''; console.log("Drag End"); }); }
+
+        function handleDragOver(event) {
+            event.preventDefault();
+            if (!draggedItemType) return;
+
+            // Clear previous highlights/placeholders first
+            if (placeholder && placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
+            document.querySelectorAll('.priority-group.drag-over-group').forEach(el => el.classList.remove('drag-over-group'));
+            document.querySelectorAll('.column.column-drag-over').forEach(el => el.classList.remove('column-drag-over'));
+
+            if (draggedItemType === 'task') {
+                // --- Task Drag Over Logic ---
+                const targetColEl = event.target.closest('.column');
+                if (!targetColEl) return;
+                const targetColId = targetColEl.dataset.columnId;
+
+                if (targetColId === sourceColumnId) { // Intra-column
+                    const targetGroup = event.target.closest('.priority-group');
+                    if (targetGroup && targetGroup.dataset.priorityGroup === draggedTaskPriority) {
+                        targetGroup.classList.add('drag-over-group');
+                        const ph = getTaskPlaceholder();
+                        // --- Animate placeholder in ---
+                        ph.style.height = '0px'; ph.style.opacity = '0'; ph.style.marginBottom = '0px'; ph.style.borderWidth = '0px';
+                        if (ph.parentNode) ph.parentNode.removeChild(ph); // Ensure it's not already somewhere
+                        // Determine insertion point
+                        const taskElements = Array.from(targetGroup.querySelectorAll('.task:not(.dragging)'));
+                        let insertBefore = null;
+                        for (const taskElement of taskElements) { const rect = taskElement.getBoundingClientRect(); if (event.clientY < rect.top + rect.height / 2) { insertBefore = taskElement; break; } }
+                        if (insertBefore) targetGroup.insertBefore(ph, insertBefore); else targetGroup.appendChild(ph);
+                        requestAnimationFrame(() => { ph.classList.add('active'); }); // Add class to trigger animation
+
+                    }
+                } else { // Inter-column
+                    targetColEl.classList.add('column-drag-over');
+                }
+                event.dataTransfer.dropEffect = 'move';
+
+            } else if (draggedItemType === 'column') {
+                // --- Column Drag Over Logic ---
+                const targetColEl = event.target.closest('.column');
+                if (!targetColEl || targetColEl.dataset.columnId === draggedItemId) return;
+
+                const ph = getColumnPlaceholder();
+                const targetRect = targetColEl.getBoundingClientRect();
+                const boardRect = kanbanBoard.getBoundingClientRect();
+                const midpoint = targetRect.left - boardRect.left + targetRect.width / 2;
+
+                if (event.clientX - boardRect.left < midpoint) {
+                    kanbanBoard.insertBefore(ph, targetColEl);
+                } else {
+                    kanbanBoard.insertBefore(ph, targetColEl.nextSibling);
+                }
+                 event.dataTransfer.dropEffect = 'move';
+            }
+        }
+
+        function handleDragLeave(event) {
+            setTimeout(() => {
+                if (event.relatedTarget && event.currentTarget.contains(event.relatedTarget)) return;
+                const columnEl = event.target.closest('.column'); if (columnEl) columnEl.classList.remove('column-drag-over');
+                const groupContainer = event.target.closest('.priority-group'); if (groupContainer) groupContainer.classList.remove('drag-over-group');
+                if (placeholder && placeholder.parentNode && !event.currentTarget.contains(event.relatedTarget)) {
+                     placeholder.classList.remove('active'); // Trigger animation out
+                     setTimeout(() => { if(placeholder && placeholder.parentNode) placeholder.parentNode.removeChild(placeholder); placeholder = null; }, 150); // Remove after animation
+                }
+                 if (!event.relatedTarget || !event.relatedTarget.closest('#kanban-board')) { document.querySelectorAll('.column-drag-over').forEach(el => el.classList.remove('column-drag-over')); document.querySelectorAll('.priority-group.drag-over-group').forEach(el => el.classList.remove('drag-over-group')); if (placeholder && placeholder.parentNode) { placeholder.classList.remove('active'); setTimeout(() => { if(placeholder && placeholder.parentNode) placeholder.parentNode.removeChild(placeholder); placeholder = null; }, 150); } }
+            }, 0);
+        }
+
+
+        function handleDrop(event) {
+            event.preventDefault();
+            const type = draggedItemType;
+            const id = draggedItemId;
+
+            if (placeholder && placeholder.parentNode) {
+                placeholder.classList.remove('active'); // Ensure animation out if not already
+                setTimeout(() => { if(placeholder && placeholder.parentNode) placeholder.parentNode.removeChild(placeholder); placeholder = null; }, 150);
+            } else {
+                placeholder = null;
+            }
+            document.querySelectorAll('.priority-group.drag-over-group').forEach(el => el.classList.remove('drag-over-group'));
+            document.querySelectorAll('.column.column-drag-over').forEach(el => el.classList.remove('column-drag-over'));
+
+            const targetColEl = event.target.closest('.column');
+
+            if (type === 'task') {
+                if (!targetColEl || !id) { console.log("Task Drop invalid."); return; }
+                const targetColId = targetColEl.dataset.columnId;
+                console.log(`Drop Task: ${id} onto Col: ${targetColId}`);
+
+                let sourceColIndex = boardState.columns.findIndex(c => c && c.id === sourceColumnId);
+                let targetColIndex = boardState.columns.findIndex(c => c && c.id === targetColId);
+                if (sourceColIndex === -1 || targetColIndex === -1) { console.error("Src/Tgt column not found."); renderBoard(); return; }
+                const sourceCol = boardState.columns[sourceColIndex]; const targetCol = boardState.columns[targetColIndex];
+                if (!Array.isArray(sourceCol.tasks) || !Array.isArray(targetCol.tasks)) { console.error("Invalid tasks array."); renderBoard(); return; }
+
+                const taskIndexInSource = sourceCol.tasks.findIndex(t => t && t.id === id);
+                if (taskIndexInSource === -1) { console.error("Task not found in src state."); renderBoard(); return; }
+                const [taskToMove] = sourceCol.tasks.splice(taskIndexInSource, 1);
+
+                if (targetColId === sourceColumnId) {
+                    const targetGroup = event.target.closest('.priority-group[data-priority-group="' + draggedTaskPriority + '"]');
+                    if (!targetGroup) { console.log("Intra-column drop outside matching priority group. Aborting."); sourceCol.tasks.splice(taskIndexInSource, 0, taskToMove); renderBoard(); return; }
+                    const tasksInGroup = Array.from(targetGroup.querySelectorAll('.task:not(.dragging)'));
+                    let insertBeforeTask = null;
+                    for (const taskEl of tasksInGroup) { const rect = taskEl.getBoundingClientRect(); if (event.clientY < rect.top + rect.height / 2) { insertBeforeTask = taskEl; break; } }
+                    let insertAtStateIndex = -1;
+                    if (insertBeforeTask) { const insertBeforeTaskId = insertBeforeTask.dataset.taskId; insertAtStateIndex = targetCol.tasks.findIndex(t => t && t.id === insertBeforeTaskId); }
+                    else { let lastTaskOfPriorityIndex = -1; for (let i = targetCol.tasks.length - 1; i >= 0; i--) { if (targetCol.tasks[i] && (targetCol.tasks[i].priority || 'normal') === draggedTaskPriority) { lastTaskOfPriorityIndex = i; break; } } insertAtStateIndex = lastTaskOfPriorityIndex !== -1 ? lastTaskOfPriorityIndex + 1 : 0; if (lastTaskOfPriorityIndex === -1) { if (draggedTaskPriority === 'urgent') insertAtStateIndex = 0; else if (draggedTaskPriority === 'important') { insertAtStateIndex = targetCol.tasks.filter(t => t.priority === 'urgent').length; } else { insertAtStateIndex = targetCol.tasks.filter(t => t.priority === 'urgent' || t.priority === 'important').length; } } }
+                    if (insertAtStateIndex === -1) { console.error("Failed determine intra-column index. Aborting."); sourceCol.tasks.splice(taskIndexInSource, 0, taskToMove); renderBoard(); return; }
+                    targetCol.tasks.splice(insertAtStateIndex, 0, taskToMove);
+                    console.log(`Task moved within column ${targetColId} to index ${insertAtStateIndex}.`);
+                } else {
+                    targetCol.tasks.push(taskToMove);
+                    console.log(`Task moved from column ${sourceColumnId} to end of column ${targetColId}.`);
+                }
+                saveState(); renderBoard();
+
+            } else if (type === 'column') {
+                 const draggedColId = id;
+                 const placeholderElement = kanbanBoard.querySelector('.column-drag-placeholder');
+
+                 let insertBeforeColEl = null;
+                 if (placeholderElement) {
+                     insertBeforeColEl = placeholderElement.nextElementSibling;
+                     placeholderElement.remove();
+                 }
+
+
+                 const sourceIndex = boardState.columns.findIndex(col => col.id === draggedColId);
+                 if (sourceIndex === -1) { console.error("Source column not found in state."); renderBoard(); return; }
+
+                 const [columnToMove] = boardState.columns.splice(sourceIndex, 1);
+
+                 let targetIndex = -1;
+                 if (insertBeforeColEl && insertBeforeColEl.classList.contains('column')) {
+                     const insertBeforeColId = insertBeforeColEl.dataset?.columnId;
+                     targetIndex = boardState.columns.findIndex(col => col.id === insertBeforeColId);
+                 } else {
+                     targetIndex = boardState.columns.length;
+                 }
+
+                 if (targetIndex === -1) { targetIndex = boardState.columns.length; }
+
+                 boardState.columns.splice(targetIndex, 0, columnToMove);
+
+                 saveState();
+                 renderBoard();
+                 console.log(`Column ${draggedColId} moved.`);
+            }
+        }
+
+
+        function showAddTaskModal() {
+            console.log("Showing add task modal."); taskTextInput.value = ''; addSelectedMemberIds.clear();
+            setupAutocomplete('assign-member-input', 'member-suggestions', 'selected-members-tags', addSelectedMemberIds); // Setup on show
+            addAssignMemberInput.value = ''; addMemberSuggestionsContainer.classList.add('hidden'); setSelectedPriority('add-priority-buttons', 'normal'); populateColumnSelect(); addTaskModal.classList.remove('hidden'); taskTextInput.focus();
+        }
+        function hideAddTaskModal() { console.log("Hiding add task modal."); addTaskModal.classList.add('hidden'); }
+
+        function showEditTaskModal(taskId) {
+            console.log("Showing edit task modal for:", taskId); const task = findTaskById(taskId); if (!task) { console.error("Task not found for edit:", taskId); return; }
+            editTaskIdInput.value = task.id; editTaskTextInput.value = task.text; setSelectedPriority('edit-priority-buttons', task.priority || 'normal');
+            editSelectedMemberIds = new Set(task.assignedMemberIds || []); console.log("Initialized editSelectedMemberIds:", Array.from(editSelectedMemberIds));
+            // Setup autocomplete for Edit modal, passing the correct Set
+            setupAutocomplete('edit-assign-member-input', 'edit-member-suggestions', 'edit-selected-members-tags', editSelectedMemberIds);
+            editAssignMemberInput.value = ''; editMemberSuggestionsContainer.classList.add('hidden'); editTaskModal.classList.remove('hidden'); editTaskTextInput.focus();
+        }
+        function hideEditTaskModal() { console.log("Hiding edit task modal."); editTaskModal.classList.add('hidden'); }
+        function findTaskById(taskId) { for (const c of boardState.columns) { if (Array.isArray(c.tasks)) { const t = c.tasks.find(t => t && t.id === taskId); if (t) return t; } } return null; }
+
+        // --- Event Listeners Setup ---
+        // setupAutocomplete for edit modal is now called from showEditTaskModal
+        function setupEventListeners() {
+             console.log("Setting up global listeners..."); if (addTaskButton) addTaskButton.addEventListener('click', showAddTaskModal); else console.error("Add Task btn missing!"); if (addColumnButton) addColumnButton.addEventListener('click', addColumn); else console.error("Add Column btn missing!"); if (cancelTaskButton) cancelTaskButton.addEventListener('click', hideAddTaskModal); else console.error("Cancel Task btn missing!");
+             if (confirmAddTaskButton) confirmAddTaskButton.addEventListener('click', () => { const prio = getSelectedPriority('add-priority-buttons'); const memberIds = Array.from(addSelectedMemberIds); console.log("Adding task with members:", memberIds); addTask(taskTextInput.value, columnSelect.value, prio, memberIds); hideAddTaskModal(); }); else console.error("Confirm Add Task btn missing!");
+             if (editCancelTaskButton) editCancelTaskButton.addEventListener('click', hideEditTaskModal); else console.error("Edit Cancel btn missing!");
+             if (editConfirmTaskButton) editConfirmTaskButton.addEventListener('click', () => { const taskId = editTaskIdInput.value; const memberIds = Array.from(editSelectedMemberIds); console.log("Updating task", taskId, "with members:", memberIds); const data = { text: editTaskTextInput.value, priority: getSelectedPriority('edit-priority-buttons'), assignedMemberIds: memberIds }; updateTask(taskId, data); hideEditTaskModal(); }); else console.error("Edit Confirm btn missing!");
+             setupPriorityButtons('add-priority-buttons'); setupPriorityButtons('edit-priority-buttons');
+             if (addMemberButton) addMemberButton.addEventListener('click', addTeamMember); else console.error("Add Member btn missing!");
+             if (newMemberNameInput) newMemberNameInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') addMemberButton.click(); }); else console.error("New Member input missing!");
+             console.log("Global listeners setup complete.");
+        }
+
+        /** Apply styles that need JS (like fixed position) */
+        function applyJsStyles() {
+            if (teamManagementDiv) {
+                teamManagementDiv.style.position = 'fixed';
+                teamManagementDiv.style.top = '1rem';
+                teamManagementDiv.style.left = '1rem';
+                teamManagementDiv.style.zIndex = '30';
+                // Recalculate required margin for main content dynamically
+                const teamMgmtHeight = teamManagementDiv.offsetHeight;
+                const topMargin = teamMgmtHeight > 0 ? (teamMgmtHeight / 16) + 2 + 'rem' : '10rem'; // Convert px to rem approx, add buffer
+                 if (mainContentDiv) {
+                    mainContentDiv.style.marginTop = topMargin;
+                 }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log("DOM Loaded. Initializing..."); try { loadState(); renderBoard(); renderTeamList(); populateColumnSelect(); setupEventListeners(); applyJsStyles(); console.log("App initialized."); if (boardState.columns.length > 0 && boardState.columns.every(c => !c.tasks || c.tasks.length === 0)) { console.log("Adding sample task."); if (!Array.isArray(boardState.columns[0].tasks)) boardState.columns[0].tasks = []; boardState.columns[0].tasks.push({ id: generateId('task'), text: 'Exemple : Cliquez pour modifier !', priority: 'normal', assignedMemberIds: [] }); saveState(); renderBoard(); } } catch (error) { console.error("Initialization Error:", error); kanbanBoard.innerHTML = `<p class="text-red-500 font-semibold text-center">Erreur chargement. Voir console.</p>`; }
+        });
+
+    </script>
+
+</body>
+</html>
